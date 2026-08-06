@@ -73,8 +73,12 @@ flowchart LR
             F2["embed-file<br/>(Embeddings)"]:::service
             F3["ai-analysis<br/>(Syllabus Extraction)"]:::service
             F4["canvas-sync<br/>(ICS Parsing)"]:::service
-            F5["send-email<br/>(Notifications)"]:::service
-            F6["stripe-webhooks<br/>(Payments)"]:::service
+            F5["send-email-notification<br/>(Notifications)"]:::service
+            F6["stripe-webhook<br/>(Payment Events)"]:::service
+            F7["canvas-announcements<br/>(Announcements Sync)"]:::service
+            F8["create-checkout-session<br/>(Checkout)"]:::service
+            F9["create-portal-session<br/>(Billing Portal)"]:::service
+            F10["parse-natural-language<br/>(Quick-Add NL Parsing)"]:::service
         end
     end
 
@@ -88,6 +92,7 @@ flowchart LR
         J["Hugging Face"]:::service
         K["Canvas (ICS)"]:::service
         L["Resend API"]:::service
+        M["Canvas API"]:::service
     end
 
     %% ---------------------------------------------------------
@@ -115,6 +120,15 @@ flowchart LR
     
     F6 <-->|Events| H
     F6 -->|Update| C
+
+    F7 -->|Fetch| M
+
+    F8 <-->|Create Session| H
+    F8 -->|Store Customer ID| C
+
+    F9 <-->|Create Session| H
+
+    F10 -->|Extract| G
 ```
 
 ## Key Architectural Features & Implementations
@@ -128,11 +142,15 @@ flowchart LR
 
 1. **RAG Pipeline for Document Questions**: Only queries explicitly about course materials trigger document retrieval via vector similarity search (pgvector). The system is self-healing: if a document search fails because files aren't processed, it auto-triggers the embedding function and retries.
 
-2. **Function Calling for Task Management**: The AI can execute 6 CRUD operations through Gemini's tool calling: `create_task`, `update_task`, `delete_task`, `batch_update_tasks`, `search_tasks`, and `search_classes`. The system implements **two-phase execution** for destructive actions (delete, batch operations) - requiring user confirmation before execution, while non-destructive actions execute immediately.
+2. **Function Calling for Task Management**: The AI can execute 7 task-management operations through Gemini's tool calling: `create_task`, `update_task`, `delete_task`, `search_tasks`, `search_classes`, `list_task_types`, and `create_task_type`. The system implements **two-phase execution** for the one destructive action (`delete_task`) - requiring user confirmation before execution, while non-destructive actions execute immediately.
 
 3. **Search-to-ID Resolution**: The AI uses human-friendly search terms (task names like "homework", class names like "Biology"), and the backend automatically resolves them to database IDs through fuzzy matching. Missing classes are auto-created with an `istaskclass` flag to separate AI-managed entities from user-created entities.
 
 4. **Streaming UX**: Server-Sent Events (SSE) deliver real-time responses with a smooth scrolling buffer that provides a typewriter effect at 60 FPS, making the interaction feel responsive even during long responses.
+
+5. **Web Search & Clarification Tools**: Two more tools round out the agent beyond RAG and task CRUD: `web_search` for questions about current events or facts outside the student's own course materials, and `request_clarification` so the agent asks a follow-up question instead of guessing when a request is ambiguous.
+
+6. **Quick-Add Natural Language Parsing**: A separate, lightweight edge function (`parse-natural-language`) powers a quick-add text box in the task creation modal. A user types a task in plain English (e.g., "homework due friday at 5pm"), Gemini extracts the action, date, time, and entities, and the result pre-fills the task form for the user to review before it goes through the same task-creation path as a manually typed task.
 
 **Code Snippet (Query Intent Classification for Cost Optimization):**
 ```typescript
@@ -172,7 +190,7 @@ function classifyQueryIntent(
 ### 2. The Secure Data Ingestion & Embedding Pipeline
 **Feature:** A secure pipeline to process user-uploaded syllabi (PDFs/DOCX), extract their content, and transform them into searchable vector embeddings.
 
-**Technical Implementation:** This serverless function is designed for resilience and security. It uses a two-stage parsing system, trying a fast library first and then falling back to the more robust `pdfjs-dist` to maximize success. All extracted text is sanitized and validated against security patterns before processing. To ensure data integrity, the function is **idempotent**, deleting any stale embeddings for a file before generating new ones.
+**Technical Implementation:** This serverless function is designed for resilience and security. It extracts PDF text via `unpdf`, then validates and sanitizes the result against security patterns before processing; extraction failures fail the request explicitly rather than silently reporting a false success. To ensure data integrity, the function is **idempotent**, deleting any stale embeddings for a file before generating new ones.
 
 ### 3. The Event-Driven Payments System
 **Feature:** A complete subscription management system integrating Stripe checkout, billing portal, and webhook-based payment synchronization.
