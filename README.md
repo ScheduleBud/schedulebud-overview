@@ -152,41 +152,6 @@ flowchart LR
 
 6. **Quick-Add Natural Language Parsing**: A separate edge function (`parse-natural-language`) turns plain text like "homework due friday at 5pm" into a pre-filled task row for the user to review and submit.
 
-**Code Snippet (Query Intent Classification for Cost Optimization):**
-```typescript
-function classifyQueryIntent(
-  query: string,
-  hasClassContext: boolean,
-  hasConversationHistory: boolean
-): 'document_search' | 'task_related' | 'general_knowledge' | 'conversational' {
-  const normalizedQuery = query.toLowerCase().trim();
-
-  // Indicator keywords for different categories
-  const documentIndicators = ['syllabus', 'lecture', 'reading', 'according to'];
-  const taskIndicators = ['create task', 'update task', 'delete task', 'due', 'deadline'];
-
-  // Priority scoring system to determine the most likely intent
-  let documentScore = 0;
-  let taskScore = 0;
-
-  documentIndicators.forEach(ind => normalizedQuery.includes(ind) ? documentScore += 2 : null);
-  taskIndicators.forEach(ind => normalizedQuery.includes(ind) ? taskScore += 2 : null);
-
-  if (hasClassContext && documentScore === 0) documentScore += 1;
-  if (hasConversationHistory && normalizedQuery.length < 30) return 'conversational';
-
-  // Determine the highest score to select the query type
-  const maxScore = Math.max(documentScore, taskScore);
-
-  if (maxScore < 2) {
-    if (hasClassContext) return 'document_search';
-    return 'general_knowledge';
-  }
-
-  return documentScore > taskScore ? 'document_search' : 'task_related';
-}
-```
-
 ### 2. The Secure Data Ingestion & Embedding Pipeline
 **Feature:** A secure pipeline to process user-uploaded syllabi (PDFs/DOCX), extract their content, and transform them into searchable vector embeddings.
 
