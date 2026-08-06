@@ -136,7 +136,7 @@ flowchart LR
 ### 1. The AI Agent with RAG Pipeline & Tool Calling (Smart Assistant)
 **Feature:** An intelligent AI agent that combines retrieval-augmented generation (RAG) for answering course-specific questions with function calling capabilities for task management. Users can ask questions about their course materials AND execute CRUD operations on their tasks through natural language (e.g., "Create a Biology homework task due on December 25", "Update my quiz to be due next week", "Delete all completed tasks").
 
-**Technical Implementation:** I architected a **stateless, streaming AI agent** that intelligently routes queries and executes tools when needed. The system uses a `classifyQueryIntent` algorithm to route queries into 4 categories (`document_search`, `task_related`, `general_knowledge`, `conversational`) BEFORE making expensive API calls. This smart routing means **~70% of queries skip RAG entirely**, avoiding unnecessary HuggingFace embedding API calls and PostgreSQL vector searches.
+**Technical Implementation:** A `classifyQueryIntent` function routes each query into one of four categories (`document_search`, `task_related`, `general_knowledge`, `conversational`) before any API call. Only `document_search` triggers RAG, so unrelated queries skip the HuggingFace embedding call and Postgres vector search entirely.
 
 **Key Capabilities:**
 
@@ -148,9 +148,9 @@ flowchart LR
 
 4. **Streaming UX**: Server-Sent Events (SSE) deliver real-time responses with a smooth scrolling buffer that provides a typewriter effect at 60 FPS, making the interaction feel responsive even during long responses.
 
-5. **Web Search & Clarification Tools**: Two more tools round out the agent beyond RAG and task CRUD: `web_search` for questions about current events or facts outside the student's own course materials, and `request_clarification` so the agent asks a follow-up question instead of guessing when a request is ambiguous.
+5. **Web Search & Clarification Tools**: `web_search` handles questions outside the student's own course materials; `request_clarification` lets the agent ask instead of guess on ambiguous requests.
 
-6. **Quick-Add Natural Language Parsing**: A separate, lightweight edge function (`parse-natural-language`) powers a quick-add text box in the task creation modal. A user types a task in plain English (e.g., "homework due friday at 5pm"), Gemini extracts the action, date, time, and entities, and the result pre-fills the task form for the user to review before it goes through the same task-creation path as a manually typed task.
+6. **Quick-Add Natural Language Parsing**: A separate edge function (`parse-natural-language`) turns plain text like "homework due friday at 5pm" into a pre-filled task row for the user to review and submit.
 
 **Code Snippet (Query Intent Classification for Cost Optimization):**
 ```typescript
