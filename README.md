@@ -1,14 +1,14 @@
-# ScheduleBud: AI-Powered Academic Scheduling Platform for College Students
+# ScheduleBud — An AI Academic Planner for College Students
 
 [![Production Ready](https://img.shields.io/badge/Status-Production%20Ready-green)](https://schedulebud.cc/) [![React](https://img.shields.io/badge/React-18.2.0-blue)](https://reactjs.org/) [![TypeScript](https://img.shields.io/badge/TypeScript-5.8.3-blue)](https://www.typescriptlang.org/) [![Supabase](https://img.shields.io/badge/Supabase-Edge%20Functions-blue)](https://supabase.com/) [![AI Powered](https://img.shields.io/badge/AI-Gemini%202.5-purple)](https://deepmind.google/technologies/gemini/)
 
 **Live Application:** [schedulebud.cc](https://schedulebud.cc/)
 
-## Project Overview
+## What ScheduleBud Does
 
-ScheduleBud brings a student's tasks, classes, course files, Canvas assignments, announcements, and study materials into one application. It can extract deadlines from syllabi, answer questions over uploaded course content, manage tasks through natural language, generate and review flashcards, and synchronize subscription and notification state.
+College work tends to end up scattered across Canvas, syllabi, calendars, notes, and a handful of study apps. ScheduleBud pulls that work into one place. Students can sync Canvas assignments and announcements, upload course files, extract deadlines from a syllabus, ask questions about their material, manage tasks in plain English, and generate flashcards for review.
 
-The product is a React single-page application backed by Supabase. PostgreSQL and Row-Level Security are the source of truth; Supabase Storage holds uploaded files; Deno Edge Functions isolate AI, Canvas, billing, and email integrations; Render serves the static frontend.
+Under the hood, it is a React single-page application backed by Supabase. PostgreSQL is the source of truth, private files live in Supabase Storage, and Deno Edge Functions handle the work that should never happen in the browser: AI calls, Canvas requests, billing, and email. Render serves the frontend.
 
 ## Live Demo
 
@@ -25,15 +25,11 @@ The product is a React single-page application backed by Supabase. PostgreSQL an
 | Hosting | Render static sites, Supabase managed services |
 | Quality | ESLint, TypeScript, Node regression tests, Playwright |
 
-## System Design
+## How It Fits Together
 
-The architecture follows five practical rules:
+The system is deliberately serverless. Supabase handles authentication, data, storage, and realtime updates, which leaves the application code focused on the parts that are specific to ScheduleBud.
 
-1. **Keep state in managed services.** PostgreSQL, Supabase Auth, and Storage own durable state; Edge Functions remain stateless.
-2. **Enforce tenant isolation in the database.** User-owned tables use `user_id` and Row-Level Security instead of relying only on application filters.
-3. **Keep secrets and privileged work server-side.** AI keys, Stripe secrets, the Supabase service role, Canvas proxying, and email delivery stay in Edge Functions.
-4. **Degrade non-critical features safely.** Memory, GraphRAG, analytics, and usage logging cannot break the primary request path.
-5. **Spend AI budget deliberately.** Model routing, local intent checks, embedding reuse, rate limits, feature caps, and token/cost logging reduce unnecessary calls.
+There are a few boundaries that matter. Durable state stays in managed services rather than in Edge Function memory. Row-Level Security protects each student's data even if application code makes a bad query. Secrets and privileged API calls stay on the server. Optional features such as memory, GraphRAG, analytics, and usage logging are allowed to fail without taking down the main request. AI calls are routed, reused, limited, and measured because they are both the slowest and the most expensive part of the stack.
 
 ```mermaid
 flowchart LR
@@ -80,18 +76,18 @@ flowchart LR
     EMAIL --> RESEND[Resend]
 ```
 
-### Runtime responsibilities
+### Who owns what
 
 | Component | Responsibility |
 |---|---|
-| React SPA | UI, local interaction state, calendar/task presentation, upload orchestration, SSE consumption, and client-side normalization of Canvas events |
-| Supabase Auth/API | Session management and authenticated access to database, storage, realtime changes, and Edge Functions |
-| PostgreSQL | Tasks, classes, settings, documents, vectors, knowledge graph, assistant memories, flashcards/decks, subscriptions, notifications, rate limits, and usage records |
-| Supabase Storage | Private course files and syllabi; file metadata remains in PostgreSQL |
-| Edge Functions | Authenticated boundaries for AI processing, external APIs, billing, and email |
-| Render | Builds and serves the production and development static sites after checks pass |
+| React SPA | Renders the app, manages local interaction state, starts uploads, consumes streaming responses, and turns Canvas events into tasks and classes |
+| Supabase Auth/API | Manages sessions and authenticated access to the database, storage, realtime updates, and Edge Functions |
+| PostgreSQL | Stores tasks, classes, settings, documents, vectors, graph data, assistant memories, flashcards, subscriptions, notifications, limits, and usage records |
+| Supabase Storage | Holds private course files and syllabi while PostgreSQL keeps their metadata |
+| Edge Functions | Provide the authenticated server boundary for AI work, external APIs, billing, and email |
+| Render | Builds and serves the production and development frontend sites after checks pass |
 
-## Core Data Flows
+## What Happens Behind the Scenes
 
 ### Course-file ingestion and retrieval
 
@@ -113,7 +109,9 @@ sequenceDiagram
     E-->>C: Return extraction and indexing status
 ```
 
-`embed-file` uses `unpdf` for PDF extraction, Gemini Flash as a repair/cleanup path, header-aware chunking with a token-size safety net, and `BAAI/bge-small-en-v1.5` for normalized embeddings. Content fingerprints allow an identical upload to reuse existing vectors. Reprocessing is idempotent: stale chunks and extraction rows are replaced rather than duplicated.
+When a student uploads a PDF, `embed-file` extracts the text with `unpdf`. If the result needs cleanup, Gemini Flash repairs it before it is split into sensible, header-aware chunks. Hugging Face's `BAAI/bge-small-en-v1.5` model turns those chunks into 384-dimensional embeddings for search.
+
+The pipeline fingerprints each file, so an identical upload can reuse work that has already been done. Reprocessing replaces old chunks and extraction records instead of quietly creating duplicates.
 
 ### Assistant request
 
@@ -138,27 +136,29 @@ sequenceDiagram
     A-->>D: Record usage and extract durable memory asynchronously
 ```
 
-The assistant routes requests among document search, task work, general knowledge, and conversation. Document questions combine pgvector chunk retrieval with one-hop GraphRAG context. Missing indexes can trigger a bounded self-healing re-index. The agent exposes task/class tools, task-type tools, web search, and clarification; destructive task deletion requires a second confirmed request.
+Not every message needs the full retrieval pipeline. The assistant first decides whether the student is asking about course material, managing a task, asking a general question, or simply continuing the conversation. Course questions search both document chunks and the small knowledge graph built during ingestion. If a file has not been indexed yet, the assistant can queue one repair attempt and continue gracefully if it does not work.
 
-Durable memory stores a bounded set of semantic facts and interaction preferences. A local self-disclosure check avoids running memory extraction on ordinary turns, dismissed memories are not resurrected, and stored memory is framed as untrusted context rather than system instructions.
+Gemini can also call tools to find classes, create or update tasks, manage task types, search the web, or ask the student to clarify an ambiguous request. Deleting tasks is the exception: it always requires a separate confirmation before anything is removed.
+
+The assistant remembers a small number of useful facts and preferences across conversations. A quick local check skips memory extraction for ordinary messages, deleted memories stay deleted, and recalled information is treated as untrusted context rather than as instructions to the model.
 
 ### Canvas synchronization
 
-`canvas-sync` authenticates the caller, validates the supplied HTTPS ICS URL, blocks private/reserved network targets, fetches with retry and timeout handling, and parses calendar events. The React client then resolves class names and task types, deduplicates by Canvas UID, and persists user-owned classes and tasks through Supabase.
+Canvas is split into two paths. For assignments, `canvas-sync` validates the student's HTTPS calendar URL, blocks private and reserved network targets, fetches the ICS feed with retries and a timeout, and parses the events. The React client then matches class names and task types, removes duplicates by Canvas UID, and saves the result through Supabase.
 
-`canvas-announcements` separately validates a public Canvas hostname and API token, fetches active courses and announcements, strips unsafe HTML, and returns normalized announcement data. Canvas API tokens are request-scoped and are not stored in the database.
+Announcements come through `canvas-announcements`, which checks the Canvas hostname, uses the supplied API token to load active courses and announcements, strips unsafe HTML, and returns a clean response. The token is used for that request only and is never stored in the database.
 
 ### Syllabus extraction and flashcards
 
-`ai-analysis` sends validated syllabus text to Gemini Pro for structured course metadata and task extraction. It includes balanced-JSON and regex recovery paths so a truncated model response can still return verified tasks instead of discarding the entire result.
+Syllabus parsing is separate from document search. `ai-analysis` sends validated text to Gemini Pro and asks for structured course details and deadlines. Model responses are not always perfect, so the parser can recover complete task objects from truncated JSON instead of throwing away an otherwise useful result.
 
-`generate-flashcards` supports generation from uploaded course material, pasted text, and existing cards. It streams structured results, runs a quality-assurance pass, stores decks and cards under RLS, and maintains SM-2 review fields (`ease_factor`, interval, repetition count, and next review). Flashcard embeddings support similarity checks and retrieval.
+Flashcards can be generated from uploaded material, pasted text, or an existing set of cards. Results stream back as they are created, pass through a quality check, and are saved into decks protected by RLS. Review scheduling uses the familiar SM-2 fields—ease, interval, repetition count, and next review—and embeddings help catch similar cards.
 
 ### Billing and notifications
 
-Checkout and billing-portal sessions are created server-side from trusted price configuration and authenticated users. `stripe-webhook` verifies the raw-body signature before synchronizing customer and subscription state to PostgreSQL. The frontend subscribes to subscription changes through Supabase Realtime.
+Stripe Checkout and Billing Portal sessions are created on the server from trusted price configuration. Stripe remains the authority on payment events: the webhook verifies every signature before updating subscription state in PostgreSQL, and the frontend receives those changes through Supabase Realtime.
 
-`send-email-notification` verifies the requesting user, reloads task details from the database, respects notification settings, suppresses same-day duplicates, enforces daily and per-minute limits, escapes user content, sends through Resend, and records delivery metadata.
+Email follows the same pattern. Before Resend receives anything, `send-email-notification` verifies the caller, reloads the task from the database, checks the student's preferences, prevents same-day duplicates, applies daily and per-minute limits, and escapes user-provided content. Successful deliveries are recorded for support and debugging.
 
 ## Edge Function Inventory
 
@@ -176,28 +176,24 @@ Checkout and billing-portal sessions are created server-side from trusted price 
 | `stripe-webhook` | Verified Stripe event processing and subscription synchronization |
 | `send-email-notification` | Rate-limited task email delivery through Resend |
 
-Shared modules centralize session validation, CORS, trusted origins, SSRF checks, request parsing, model names, embeddings, subscription lookup, rate limiting, security logs, observability, and AI usage accounting.
+The functions share the plumbing that should behave consistently everywhere: session checks, CORS, trusted origins, SSRF protection, request parsing, model selection, embeddings, subscription lookup, rate limiting, security logs, observability, and AI usage accounting.
 
-## Data and Security Model
+## Security and Reliability
 
-- Supabase Auth issues the browser session; the frontend receives only the project URL and anonymous key.
-- Edge Functions validate the bearer session before user-scoped work. The service-role key remains server-side.
-- RLS protects user-owned rows including tasks, classes, files, documents, memories, flashcards, decks, settings, and usage data.
-- Storage paths and file metadata are checked against the authenticated owner before processing.
-- PostgreSQL-backed per-user and per-IP rate limits work across stateless Edge Function instances.
-- Free-tier feature caps are enforced server-side with idempotent usage records and refund paths for failed AI work.
-- AI calls record model, function, action, token counts, request IDs, and estimated cost without making telemetry a dependency of the user response.
-- Canvas endpoints include SSRF defenses; Stripe webhooks use signature verification; redirect origins are allow-listed; rendered email content is escaped.
+The browser only receives the Supabase project URL and anonymous key. Supabase Auth issues the session, every user-facing Edge Function validates it, and the service-role key never leaves the server. RLS protects user-owned tasks, classes, files, documents, memories, flashcards, decks, settings, and usage records. File processing also checks both the storage path and its database metadata against the authenticated owner.
+
+Rate limits live in PostgreSQL, so they still work when requests land on different stateless function instances. Free-tier limits are enforced on the server with idempotent usage records, and failed AI jobs can return the allowance they reserved. AI telemetry records the model, operation, token counts, request ID, and estimated cost, but a logging failure never blocks the student's response.
+
+The external integrations have their own guardrails: Canvas requests include SSRF protection, Stripe webhooks require a valid signature, billing redirects use an origin allow-list, and email templates escape user content.
 
 ## Deployment
 
-Render defines separate static services for `main` and `dev`. A deployment installs locked dependencies, applies Supabase migrations through the repository safety script, builds the React bundle, and publishes `frontend/build`. Production headers include CSP, HSTS, clickjacking protection, MIME sniffing protection, a strict referrer policy, and a restrictive permissions policy.
+Render hosts separate static sites for `main` and `dev`. A deployment installs the locked dependencies, applies Supabase migrations through the repository's safety script, builds the React app, and publishes `frontend/build`. The production site ships with CSP, HSTS, clickjacking protection, MIME-sniffing protection, a strict referrer policy, and a restrictive permissions policy.
 
-The repository's CI order is lint, TypeScript checking, regression tests, and a production build. Database migrations and Edge Function deployments use explicit development and production project references so the same source can be promoted without embedding environment credentials.
+CI runs linting, TypeScript checks, regression tests, and a production build. Database migrations and Edge Function deployments use explicit development and production project references, so the same code can move between environments without baking credentials into the repository.
 
-## Design Trade-offs
+## Why It Is Built This Way
 
-- The browser owns presentation and some normalization work; privileged network access and secrets stay at the edge.
-- Retrieval and memory enrich an answer but fail open so an auxiliary subsystem cannot take down chat.
-- PostgreSQL is used for vectors, graph data, limits, analytics, and application records to avoid operating additional stateful infrastructure.
-- AI model identifiers are centralized and environment-overridable: free paths default to Gemini 2.5 Flash and premium reasoning paths to Gemini 2.5 Pro.
+ScheduleBud keeps presentation and lightweight normalization in the browser, while anything involving a secret or privileged network call stays at the edge. Retrieval and memory make the assistant more useful, but neither is important enough to take down chat when it fails.
+
+PostgreSQL already sits at the center of the application, so it also holds vectors, graph data, rate limits, analytics, and product records. That keeps the operational footprint small and makes ownership rules easier to reason about. Model names live in one shared module and can be changed through the environment; today, the free paths use Gemini 2.5 Flash and premium reasoning uses Gemini 2.5 Pro.
