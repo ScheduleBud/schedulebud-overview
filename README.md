@@ -10,10 +10,6 @@ College work tends to end up scattered across Canvas, syllabi, calendars, notes,
 
 Under the hood, it is a React single-page application backed by Supabase. PostgreSQL is the source of truth, private files live in Supabase Storage, and Deno Edge Functions handle the work that should never happen in the browser: AI calls, Canvas requests, billing, and email. Render serves the frontend.
 
-## Live Demo
-
-[Watch the ScheduleBud demo](https://youtu.be/TEmODMrIAvg)
-
 ## Tech Stack
 
 | Layer | Technology |
